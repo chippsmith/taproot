@@ -91,4 +91,6 @@ s3 = sign_musig(privkey3_c, k3, R_agg, pubkey_agg, msg)
 sig_agg =  aggregate_musig_signatures([s1, s2, s3], R_agg)
 
 assert pubkey_agg.verify_schnorr(sig_agg, msg)
+
+
 print("Success! Signature verifies against aggregate pubkey")
