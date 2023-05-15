@@ -177,7 +177,7 @@ privKeyB_keyPath = main_privkeyB_c
 privKeyC_keyPath = main_privkeyC_c
 tweak_keyPath = taptweak
 
-if output_keyPath.get_y()%2 != 0:
+if output_keyPath.get_y() %2  != 0:
     output_keyPath.negate()
     privKeyA_keyPath.negate()
     privKeyB_keyPath.negate()
@@ -193,13 +193,14 @@ sighash_musig =  TaprootSignatureHash(spending_tx, [output], SIGHASH_ALL_TAPROOT
 n1 = generate_schnorr_nonce()
 n2 = generate_schnorr_nonce()
 n3 = generate_schnorr_nonce()
-R_agg, a =  aggregate_schnorr_nonces([n1.get_pubkey(),n2.get_pubkey(),n3.get_pubkey()])
+R_agg, negated =  aggregate_schnorr_nonces([n1.get_pubkey(),n2.get_pubkey(),n3.get_pubkey()])
 
-if R_agg.get_y() % 2 != 0:
+###Why do we not negate R_agg here??
+if negated:
     n1.negate()
     n2.negate()
     n3.negate()
-    R_agg.negate()
+    
 
 # Create an aggregate signature.
 # Remember to add a factor for the tweak
@@ -212,7 +213,8 @@ sig_agg = aggregate_musig_signatures([sA, sB, sC, e * tweak_keyPath], R_agg)
 print("Aggregate signature is {}\n".format(sig_agg.hex()))
 
 
-### Why is it not verifying???
+### Why is it not verifying???  Only works half time,  Something to do with odd y value
+### Now it works
 assert output_keyPath.verify_schnorr(sig_agg, sighash_musig)
 
 # Construct transaction witness
@@ -227,5 +229,45 @@ assert test.nodes[0].testmempoolaccept([spending_tx_str])[0]['allowed']
 print("Key path spending transaction weight: {}".format(test.nodes[0].decoderawtransaction(spending_tx_str)['weight']))
 
 print("Success!")
+### now we want to spend using a short delay script
+spending_tx = CTransaction()
+spending_tx.nVersion = 2
+spending_tx.nLockTime = 0
+outpoint = COutPoint(tx.sha256, output_index)
+spending_tx_in = CTxIn(outpoint=outpoint, nSequence=delay)
+spending_tx.vin = [spending_tx_in]
+spending_tx.vout = [dest_output]
 
+sighash = TaprootSignatureHash(spending_tx, [output], SIGHASH_ALL_TAPROOT, scriptpath=True, script= tapscript_2a.script)
+witness_elements = []
+
+# Add signatures to the witness
+# Remember to reverse the order of signatures  WHY Reverse order?? Script??
+sigA = main_privkeyA.sign_schnorr(sighash)
+sigB = main_privkeyB.sign_schnorr(sighash)
+sigD = backup_privkeyD.sign_schnorr(sighash)
+
+
+witness_elements = [sigD, sigB, sigA, tapscript_2a.script, control_map[tapscript_2a.script]]
+spending_tx.wit.vtxinwit.append(CTxInWitness(witness_elements))
+spending_tx_str = spending_tx.serialize().hex()
+
+# Test timelock
+a = test.nodes[0].testmempoolaccept([spending_tx_str])
+print(a)
+
+print("Short delay script path spending transaction weight: {}".format(test.nodes[0].decoderawtransaction(spending_tx_str)['weight']))
+
+test.nodes[0].generate(delay - 1)
+
+
+test.nodes[0].generate(1)
+
+# Transaction should be accepted now that the timelock is satisfied
+a = test.nodes[0].testmempoolaccept([spending_tx_str])
+print(a)
+assert test.nodes[0].testmempoolaccept([spending_tx.serialize().hex()])[0]['allowed']
+
+
+print("Success!")
 test.shutdown()
